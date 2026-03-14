@@ -20,6 +20,10 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
+app.use(cors({
+  origin: process.env.FRONTEND_URL || '*' 
+}));
+
 const auth = (req, res, next) => {
   const token = req.header('Authorization')?.replace('Bearer ', '');
 
