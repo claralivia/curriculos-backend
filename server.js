@@ -8,6 +8,7 @@ const bcrypt = require('bcryptjs');
 
 const User = require('./models/User');
 const CV = require('./models/CV');
+const ActivityLog = require('./models/ActivityLog');
 
 const app = express();
 
@@ -47,6 +48,41 @@ const isAdmin = (req, res, next) => {
   next();
 };
 
+const getRequestIP = (req) => {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim();
+  }
+
+  return req.ip || req.socket?.remoteAddress || '';
+};
+
+const registrarAtividade = async ({
+  req,
+  actor = null,
+  action,
+  resourceType = 'system',
+  resourceId = '',
+  metadata = {}
+}) => {
+  try {
+    await ActivityLog.create({
+      actorId: actor?._id || null,
+      actorNome: actor?.nome || '',
+      actorEmail: actor?.email || '',
+      actorRole: actor?.role || '',
+      action,
+      resourceType,
+      resourceId: resourceId ? String(resourceId) : '',
+      metadata,
+      ip: getRequestIP(req),
+      userAgent: req.headers['user-agent'] || ''
+    });
+  } catch (error) {
+    console.error('Falha ao registrar atividade:', error?.message || error);
+  }
+};
+
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -54,16 +90,47 @@ app.post('/login', async (req, res) => {
     const user = await User.findOne({ email });
 
     if (!user) {
+      await registrarAtividade({
+        req,
+        action: 'LOGIN_FALHO',
+        resourceType: 'auth',
+        metadata: {
+          email,
+          motivo: 'usuario_nao_encontrado'
+        }
+      });
       return res.status(401).send('Credenciais inválidas ou conta inativa');
     }
 
     if (user.status === 'inativo') {
+      await registrarAtividade({
+        req,
+        actor: user,
+        action: 'LOGIN_FALHO',
+        resourceType: 'auth',
+        resourceId: user._id,
+        metadata: {
+          email,
+          motivo: 'usuario_inativo'
+        }
+      });
       return res.status(401).send('Credenciais inválidas ou conta inativa');
     }
 
     const senhaValida = await bcrypt.compare(password, user.password);
 
     if (!senhaValida) {
+      await registrarAtividade({
+        req,
+        actor: user,
+        action: 'LOGIN_FALHO',
+        resourceType: 'auth',
+        resourceId: user._id,
+        metadata: {
+          email,
+          motivo: 'senha_invalida'
+        }
+      });
       return res.status(401).send('Credenciais inválidas ou conta inativa');
     }
 
@@ -71,6 +138,17 @@ app.post('/login', async (req, res) => {
       { id: user._id, role: user.role },
       process.env.JWT_SECRET
     );
+
+    await registrarAtividade({
+      req,
+      actor: user,
+      action: 'LOGIN_SUCESSO',
+      resourceType: 'auth',
+      resourceId: user._id,
+      metadata: {
+        status: 'sucesso'
+      }
+    });
 
     res.json({
       token,
@@ -122,6 +200,17 @@ app.post('/cv/new', auth, async (req, res) => {
       tituloDocumento: req.body.tituloDocumento || 'Novo Currículo'
     });
 
+    await registrarAtividade({
+      req,
+      actor: user,
+      action: 'CV_CRIADO',
+      resourceType: 'cv',
+      resourceId: novo._id,
+      metadata: {
+        tituloDocumento: novo.tituloDocumento
+      }
+    });
+
     res.json(novo);
   } catch {
     res.status(500).send('Erro ao criar currículo');
@@ -130,11 +219,28 @@ app.post('/cv/new', auth, async (req, res) => {
 
 app.put('/cv/:id', auth, async (req, res) => {
   try {
+    const user = await User.findById(req.user.id);
     const updated = await CV.findOneAndUpdate(
       { _id: req.params.id, userId: req.user.id },
       req.body,
       { new: true }
     );
+
+    if (!updated) {
+      return res.status(404).send('Currículo não encontrado');
+    }
+
+    await registrarAtividade({
+      req,
+      actor: user,
+      action: 'CV_EDITADO',
+      resourceType: 'cv',
+      resourceId: updated._id,
+      metadata: {
+        tituloDocumento: updated.tituloDocumento,
+        secoes: Array.isArray(updated.secoes) ? updated.secoes.length : 0
+      }
+    });
 
     res.json(updated);
   } catch {
@@ -144,9 +250,25 @@ app.put('/cv/:id', auth, async (req, res) => {
 
 app.delete('/cv/:id', auth, async (req, res) => {
   try {
-    await CV.findOneAndDelete({
+    const user = await User.findById(req.user.id);
+    const removido = await CV.findOneAndDelete({
       _id: req.params.id,
       userId: req.user.id
+    });
+
+    if (!removido) {
+      return res.status(404).send('Currículo não encontrado');
+    }
+
+    await registrarAtividade({
+      req,
+      actor: user,
+      action: 'CV_EXCLUIDO',
+      resourceType: 'cv',
+      resourceId: removido._id,
+      metadata: {
+        tituloDocumento: removido.tituloDocumento
+      }
     });
 
     res.send('Excluído');
@@ -214,6 +336,22 @@ app.post('/admin/users/new', auth, async (req, res) => {
       }
     });
 
+    const admin = await User.findById(req.user.id);
+    await registrarAtividade({
+      req,
+      actor: admin,
+      action: 'ADMIN_USUARIO_CRIADO',
+      resourceType: 'user',
+      resourceId: novoUsuario._id,
+      metadata: {
+        nome: novoUsuario.nome,
+        email: novoUsuario.email,
+        role: novoUsuario.role,
+        status: novoUsuario.status,
+        plano: novoUsuario.plano?.tipo || 'lite'
+      }
+    });
+
     res.json({
       _id: novoUsuario._id,
       nome: novoUsuario.nome,
@@ -261,9 +399,97 @@ app.patch('/admin/users/:id', auth, async (req, res) => {
       new: true
     }).select('-password');
 
+    if (!updated) {
+      return res.status(404).send('Usuário não encontrado');
+    }
+
+    const admin = await User.findById(req.user.id);
+    await registrarAtividade({
+      req,
+      actor: admin,
+      action: 'ADMIN_USUARIO_ATUALIZADO',
+      resourceType: 'user',
+      resourceId: updated._id,
+      metadata: {
+        nome: updated.nome,
+        email: updated.email,
+        role: updated.role,
+        status: updated.status,
+        plano: updated.plano?.tipo || 'lite',
+        premium: Boolean(updated.plano?.premium)
+      }
+    });
+
     res.json(updated);
   } catch {
     res.status(500).send('Erro ao atualizar usuário');
+  }
+});
+
+app.get('/admin/activity-logs', auth, isAdmin, async (req, res) => {
+  try {
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 500)) : 100;
+
+    const logs = await ActivityLog.find()
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    res.json(logs);
+  } catch {
+    res.status(500).send('Erro ao buscar logs de atividade');
+  }
+});
+
+app.get('/admin/backups/cvs', auth, isAdmin, async (req, res) => {
+  try {
+    const filtro = {};
+    if (req.query.userId) {
+      filtro.userId = req.query.userId;
+    }
+
+    const cvs = await CV.find(filtro).sort({ updatedAt: -1 }).lean();
+    const userIds = [...new Set(cvs.map((cv) => String(cv.userId)).filter(Boolean))];
+    const users = await User.find({ _id: { $in: userIds } })
+      .select('nome email status plano')
+      .lean();
+
+    const usersMap = users.reduce((acc, user) => {
+      acc[String(user._id)] = user;
+      return acc;
+    }, {});
+
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      totalCVs: cvs.length,
+      totalUsers: users.length,
+      cvs: cvs.map((cv) => ({
+        ...cv,
+        owner: usersMap[String(cv.userId)] || null
+      }))
+    };
+
+    const dataTag = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="backup-cvs-${dataTag}.json"`);
+
+    const admin = await User.findById(req.user.id);
+    await registrarAtividade({
+      req,
+      actor: admin,
+      action: 'ADMIN_BACKUP_CVS_GERADO',
+      resourceType: 'backup',
+      metadata: {
+        totalCVs: cvs.length,
+        totalUsers: users.length,
+        filtroUserId: req.query.userId || null
+      }
+    });
+
+    res.status(200).send(JSON.stringify(payload, null, 2));
+  } catch {
+    res.status(500).send('Erro ao gerar backup dos currículos');
   }
 });
 
