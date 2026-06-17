@@ -9,6 +9,7 @@ const bcrypt = require('bcryptjs');
 const User = require('./models/User');
 const CV = require('./models/CV');
 const ActivityLog = require('./models/ActivityLog');
+const Announcement = require('./models/Announcement');
 
 const app = express();
 
@@ -490,6 +491,40 @@ app.get('/admin/backups/cvs', auth, isAdmin, async (req, res) => {
     res.status(200).send(JSON.stringify(payload, null, 2));
   } catch {
     res.status(500).send('Erro ao gerar backup dos currículos');
+  }
+});
+
+app.get('/announcements', auth, async (req, res) => {
+  try {
+    const avisos = await Announcement.find().sort({ createdAt: -1 }).lean();
+    res.json(avisos);
+  } catch {
+    res.status(500).send('Erro ao buscar avisos');
+  }
+});
+
+app.post('/admin/announcements', auth, isAdmin, async (req, res) => {
+  try {
+    const { titulo, mensagem, tipo } = req.body;
+    const novoAviso = await Announcement.create({ titulo, mensagem, tipo });
+    
+    const admin = await User.findById(req.user.id);
+    await registrarAtividade({
+      req, actor: admin, action: 'AVISO_CRIADO', resourceType: 'system', metadata: { titulo }
+    });
+
+    res.json(novoAviso);
+  } catch {
+    res.status(500).send('Erro ao criar aviso');
+  }
+});
+
+app.delete('/admin/announcements/:id', auth, isAdmin, async (req, res) => {
+  try {
+    await Announcement.findByIdAndDelete(req.params.id);
+    res.send('Aviso excluído');
+  } catch {
+    res.status(500).send('Erro ao excluir aviso');
   }
 });
 
