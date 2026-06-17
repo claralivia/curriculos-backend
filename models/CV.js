@@ -7,17 +7,33 @@ const CVSchema = new mongoose.Schema({
     corPrincipal: { type: String, default: '#4f9d76' },
     fontFamily: { type: String, default: 'font-sans' },
     exibirFoto: { type: Boolean, default: true },
-    exibirSubtitulo: { type: Boolean, default: true }
+    exibirSubtitulo: { type: Boolean, default: true },
+    tamanhoFoto: { type: String, default: 'medio' },
+    formatoFoto: { type: String, default: 'circulo' },
+    espacamento: { type: String, default: 'padrao' },
+    layoutCabecalho: { type: String, default: 'original' },
+    caixaAlta: {
+      nome: { type: Boolean, default: true },
+      cargo: { type: Boolean, default: true },
+      contatos: { type: Boolean, default: true },
+      titulosSecao: { type: Boolean, default: true },
+      titulosItem: { type: Boolean, default: true },
+      subtitulosItem: { type: Boolean, default: true },
+      textosGerais: { type: Boolean, default: false }
+    }
   },
   secoes: [{
     id: String,
     titulo: String,
+    visivel: { type: Boolean, default: true },
     tipo: { type: String, enum: ['texto', 'itens'], default: 'texto' },
     conteudo: { type: String, default: '' },
     itens: [{
+      id: String,
       titulo: String,
       subtitulo: String,
-      descricao: String
+      descricao: String,
+      visivel: { type: Boolean, default: true }
     }]
   }],
   dados: {
