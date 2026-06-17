@@ -11,7 +11,7 @@ const CVSchema = new mongoose.Schema({
     tamanhoFoto: { type: String, default: 'medio' },
     formatoFoto: { type: String, default: 'circulo' },
     espacamento: { type: String, default: 'padrao' },
-    layoutCabecalho: { type: String, default: 'original' },
+    modeloCabecalho: { type: String, default: 'modelo1' },
     caixaAlta: {
       nome: { type: Boolean, default: true },
       cargo: { type: Boolean, default: true },
@@ -25,11 +25,10 @@ const CVSchema = new mongoose.Schema({
   secoes: [{
     id: String,
     titulo: String,
-    visivel: { type: Boolean, default: true },
     tipo: { type: String, enum: ['texto', 'itens'], default: 'texto' },
     conteudo: { type: String, default: '' },
+    visivel: { type: Boolean, default: true },
     itens: [{
-      id: String,
       titulo: String,
       subtitulo: String,
       descricao: String,
